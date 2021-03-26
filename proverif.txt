@@ -1,0 +1,126 @@
+(*--The two public channel--*)
+free ch1: channel.
+free ch2: channel.
+
+(*--The basic type--*)
+type entity.
+type nonce.
+type key.
+
+(*--Hash operation--*) 
+fun Hash(bitstring): bitstring.
+
+
+(*--XOR operation--*)
+fun XOR(bitstring, bitstring): bitstring.
+equation forall x: bitstring, y: bitstring;
+XOR(XOR(x, y), y) = x.
+
+(*--Concat operation--*)
+fun Con(bitstring, bitstring): bitstring.
+
+
+fun Enc(bitstring,key): bitstring.
+reduc forall x: bitstring, y: key;
+Dec(Enc(x,y),y) = x.
+
+(*--Type convertion--*)
+fun nontobit(nonce): bitstring [data,typeConverter].
+fun bittokey(bitstring): key     [data,typeConverter].
+
+(*--The basic variables--*)
+free SN, AP, HN: entity.       (*---three entities in the proposed scheme--*)
+free T1SN: bitstring.
+free T2HN: bitstring.
+free S1SN: bitstring.
+free S2SN: bitstring.
+free KSHN: bitstring[private].       (*---public key--*)   
+
+(*--Authentication queries--*)
+event SHbegin(entity).
+event SHend(entity).
+event HSbegin(entity).
+event HSend(entity).
+
+query t: entity; inj-event(SHend(t)) ==> inj-event(SHbegin(t)).
+query t: entity; inj-event(HSend(t)) ==> inj-event(HSbegin(t)).
+
+(*--Queries--*)
+free svalueA, svalueB: bitstring [private].
+query attacker(svalueA);
+        attacker(svalueB).
+
+(*--SN--*)
+let processSN(IDSN: bitstring, XSN: bitstring, YSN: bitstring) =
+        let (RIDs: bitstring) = Hash(Con(IDSN, Con(XSN, Con(YSN, Con(S2SN, T1SN))))) in
+
+        event HSbegin(HN);
+
+(*S>A*) out(ch1, (XSN, YSN, RIDs, T1SN, true));  
+(*A>S*) in(ch1, (r: bitstring, NXSN: bitstring, NYSN: bitstring, CSN: bitstring));
+        let (xj: bitstring) = XOR(IDSN, XOR(YSN, XSN)) in
+        let (xq: bitstring) = XOR(r, xj) in
+        let (xg: bitstring) = Hash(Con(xq, Con(xj, S2SN))) in
+        let (xXSN: bitstring) = XOR(NXSN, xg) in
+        let (xYSN: bitstring) = XOR(NYSN, xg) in
+        let (xCSN: bitstring) = Hash(Con(xq, Con(IDSN, Con(xj, Con(xXSN, Con(xYSN, T2HN)))))) in
+        if xCSN = CSN then
+            let (xKs: bitstring) = Hash(Con(xq, Con(S1SN, S2SN))) in
+            event SHend(SN);
+            out(ch1, Enc(svalueA, bittokey(xKs))).
+
+
+(*--AP--*)
+let processAP(IDAP: bitstring, PIDAP: bitstring) = 
+        in(ch1, (XSN: bitstring, YSN: bitstring, RIDs: bitstring));
+
+(*A>H*) out(ch2, (XSN, YSN, RIDs, T1SN, PIDAP, true));
+
+(*H>A*) in(ch2, (r: bitstring, NXSN: bitstring, NYSN: bitstring, CSN: bitstring, NPIDAP: bitstring, ZAP: bitstring));
+        let (xZAP: bitstring) = Hash(Con(PIDAP, Con(NPIDAP, IDAP))) in
+        if xZAP = ZAP then
+(*A>S*)     out(ch1, (r, NXSN, NYSN, CSN, T2HN, true)).
+
+
+(*--HN--*)
+let processHN(IDAP: bitstring, IDSN: bitstring) =     
+        in(ch2, (XSN: bitstring, YSN: bitstring, RIDs: bitstring, PIDAP: bitstring));
+        let (a: bitstring)= XOR(XSN, KSHN) in
+		let (xIDAP: bitstring)= XOR(PIDAP,Hash(Con(a,KSHN))) in
+		let (xIDSN: bitstring)= XOR(YSN,Hash(Con(KSHN,a))) in
+        if xIDSN = IDSN then
+            let (xRIDs: bitstring)= Hash(Con(IDSN,Con(XSN,Con(YSN,Con(S2SN,T1SN))))) in
+            if xRIDs = RIDs then
+                event SHbegin(SN);
+                new q: nonce;
+                new nasn: nonce;
+                let (xXSN: bitstring)= XOR(nontobit(nasn),KSHN) in
+                let (xYSN: bitstring)= XOR(IDSN,Hash(Con(KSHN,nontobit(nasn)))) in
+                let (NPIDAP: bitstring)= XOR(IDAP,Hash(Con(nontobit(nasn),KSHN))) in
+                let (j: bitstring)= XOR(IDSN,XOR(YSN,XSN)) in
+                let (r: bitstring)= XOR(nontobit(q),j) in
+                let (g: bitstring)= Hash(Con(nontobit(q),Con(j,S2SN))) in
+                let (ZAP: bitstring)= Hash(Con(PIDAP,Con(NPIDAP,IDAP))) in
+                let (NXSN: bitstring)= XOR(xXSN,g) in
+                let (NYSN: bitstring)= XOR(xYSN,g) in
+                let (CSN: bitstring)= Hash(Con(nontobit(q),Con(IDSN,Con(j,Con(xXSN,Con(xYSN,T2HN)))))) in
+                let (Ks: bitstring)= Hash(Con(nontobit(q),Con(S1SN,S2SN))) in
+
+(*H>A*)         out(ch2, (r, NXSN, NYSN, CSN, T2HN, NPIDAP, ZAP, true));  
+                event HSend(HN);  
+                out(ch2, Enc(svalueB, bittokey(Ks))).		
+
+(*--Start process--*)
+process
+(
+        new XSN: bitstring;
+        new YSN: bitstring;
+        new PIDAP: bitstring;
+        new IDSN: bitstring;
+        new IDAP: bitstring;
+
+          (!processSN(IDSN, XSN, YSN)) | 
+          (!processAP(IDAP, PIDAP)) |
+          (!processHN(IDAP, IDSN)) 
+  )
+
